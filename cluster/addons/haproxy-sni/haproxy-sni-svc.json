@@ -1,0 +1,23 @@
+{
+  "apiVersion": "v1",
+  "kind": "Service",
+  "metadata": {
+    "name": "haproxy-sni",
+    "labels": {
+      "app": "haproxy-sni",
+      "appid": "haproxy-sni-v1.0"
+    }
+  },
+  "spec": {
+    "selector": {
+      "app": "haproxy-sni"
+    },
+    "ports": [
+      {
+        "port": 443,
+        "protocol": "TCP"
+      }
+    ],
+    "type": "NodePort"
+  }
+}

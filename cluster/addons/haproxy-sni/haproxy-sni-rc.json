@@ -1,0 +1,48 @@
+{
+  "apiVersion": "v1",
+  "kind": "ReplicationController",
+  "metadata": {
+    "name": "haproxy-sni-v1.0",
+    "labels": {
+      "app": "haproxy-sni-v1.0"
+    }
+  },
+  "spec": {
+    "replicas": 2,
+    "selector": {
+      "appid": "haproxy-sni-v1.0"
+    },
+    "template": {
+      "metadata": {
+        "labels": {
+          "appid": "haproxy-sni-v1.0",
+          "app": "haproxy-sni"
+        }
+      },
+      "spec": {
+        "imagePullSecrets": [
+          {
+            "name": "brkt-registry-pull-secret"
+          }
+        ],
+        "nodeSelector": {
+            "has-public-ip": "true"
+        }, 
+        "nodeName": "frontend0.shared-yeti.brkt.net",
+        "containers": [
+          {
+            "name": "haproxy-sni",
+            "image": "registry.int.brkt.net/brkt/haproxy-sni:v1.0",
+            "imagePullPolicy": "Always",
+            "ports": [{
+               "containerPort": 443,
+               "hostIP": "10.201.32.171",
+               "hostPort": 443
+             }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}
