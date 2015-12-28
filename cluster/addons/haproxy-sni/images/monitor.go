@@ -135,10 +135,15 @@ func (lb *loadbalancer) monitorPods(interval time.Duration, kube_client *client.
 			if err != nil {
 				// probably don't want this routine to die on failed lookup
 				glog.Warning(err)
-			}
-			updated, updatedServices := lb.checkForUpdate(podlist.Items)
-			if updated {
-				updateCh <- updatedServices
+			} else if len(podlist.Items) == 0 {
+				glog.Warning("No pods found")
+			} else {
+				// only update if pods are found and no error is
+				// returned from the api call to kubernetes
+				updated, updatedServices := lb.checkForUpdate(podlist.Items)
+				if updated {
+					updateCh <- updatedServices
+				}
 			}
 		case <-shutdownCh:
 			return
