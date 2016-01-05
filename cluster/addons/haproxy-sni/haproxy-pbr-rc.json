@@ -1,0 +1,44 @@
+{
+  "apiVersion": "v1",
+  "kind": "ReplicationController",
+  "metadata": {
+    "name": "haproxy-pbr-v1.0",
+    "labels": {
+      "app": "haproxy-pbr-v1.0"
+    }
+  },
+  "spec": {
+    "replicas": 2,
+    "selector": {
+      "appid": "haproxy-pbr-v1.0"
+    },
+    "template": {
+      "metadata": {
+        "labels": {
+          "appid": "haproxy-pbr-v1.0",
+          "app": "haproxy-pbr"
+        }
+      },
+      "spec": {
+        "imagePullSecrets": [
+          {
+            "name": "brkt-registry-pull-secret"
+          }
+        ],
+        "containers": [
+          {
+            "name": "haproxy-pbr",
+            "image": "registry.int.brkt.net/brkt/haproxy-pbr:v1.0",
+            "imagePullPolicy": "Always",
+            "command": ["/bin/haproxy-monitor", "-usePBR=true"],
+            "ports": [{
+               "containerPort": 8000,
+               "hostPort": 8000
+             }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

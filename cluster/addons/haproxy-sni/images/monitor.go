@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"math/rand"
@@ -25,12 +26,18 @@ const (
 	MAX_RETRIES                            = 5
 	HAPROXY_NAME                           = "haproxy-sni-name"
 	HAPROXY_EXPOSE                         = "haproxy-sni-expose"
+	HAPROXY_PATH_NAME                      = "haproxy-pbr-name"
+	HAPROXY_PATH_EXPOSE                    = "haproxy-pbr-expose"
 )
 
 // All services listen on port 443
 const SVC_PORT = 443
 
 type loadbalancer struct {
+	// if true write path-based routing config
+	// if false write sni routing config
+	usePBR bool
+
 	// one ConfigWriter per instance. ConfigWriter has
 	// separate lbServers for each service. Each
 	// LBServer specifies a SNI. Each LBServer routes traffic
@@ -44,6 +51,30 @@ type loadbalancer struct {
 	// channel passed to each monitor. This channels is used to
 	// signal monitors to shutdown when this process receives SIGTERM
 	shutdownCh chan struct{}
+}
+
+// creates load balancer struct that config for
+// services using SNI routing
+func newSNILb() *loadbalancer {
+	lbConfig := NewLBConfigWriter(HAPROXY_CONFIG_PATH, getSyslogAddr(), make(map[string]Backend), []LBServer{})
+	return &loadbalancer{
+		usePBR:         false,
+		lbConfigWriter: lbConfig,
+		services:       make(map[string]*svc),
+		shutdownCh:     make(chan struct{}),
+	}
+}
+
+// creates load balancer struct that config for
+// services using path based routing
+func newPathBasedLb() *loadbalancer {
+	lbConfig := NewPBLBConfigWriter(HAPROXY_CONFIG_PATH, getSyslogAddr(), make(map[string]Backend), []LBServer{})
+	return &loadbalancer{
+		usePBR:         true,
+		lbConfigWriter: lbConfig,
+		services:       make(map[string]*svc),
+		shutdownCh:     make(chan struct{}),
+	}
 }
 
 type svc struct {
@@ -61,6 +92,10 @@ type svc struct {
 // config and invokes haproxy with the -sf option to trigger
 // a config reload.
 func main() {
+	var usePBR = flag.Bool("usePBR", false, "Indicates if path based routing should be used. Default is to use SNI")
+	var lb *loadbalancer
+	flag.Parse()
+
 	shutdownMainCh := make(chan struct{})
 	updateCh := make(chan map[string]struct{})
 
@@ -69,7 +104,11 @@ func main() {
 		glog.Fatalf("Unable to connect to kubernetes api server: %v", err)
 	}
 
-	lb := newLb()
+	if *usePBR {
+		lb = newPathBasedLb()
+	} else {
+		lb = newSNILb()
+	}
 
 	go lb.monitorPods(ARBITRARY_DEFAULT_WORKER_POLL_INTERVAL, kube_client, updateCh, shutdownMainCh)
 
@@ -100,15 +139,11 @@ func main() {
 	}
 }
 
-func getSNIName(pod api.Pod) string {
-	return pod.ObjectMeta.Labels[HAPROXY_NAME]
-}
-
-func useHAProxy(pod api.Pod) bool {
-	if pod.ObjectMeta.Labels[HAPROXY_EXPOSE] == "true" {
-		return true
+func getPodRoute(pod api.Pod, usePBR bool) string {
+	if usePBR {
+		return pod.ObjectMeta.Labels[HAPROXY_PATH_NAME]
 	}
-	return false
+	return pod.ObjectMeta.Labels[HAPROXY_NAME]
 }
 
 // monitors pods in this k8s instance and triggers an update when
@@ -163,7 +198,7 @@ func (lb *loadbalancer) checkForUpdate(pods []api.Pod) (bool, map[string]struct{
 			continue
 		}
 		// if this service is already monitored check if the untrackedPod is new
-		if monitoredService, ok := lb.services[getSNIName(untrackedPod)]; ok {
+		if monitoredService, ok := lb.services[getPodRoute(untrackedPod, lb.usePBR)]; ok {
 			// if untrackedPod has an existing sni and a new podIP
 			// it is append to the existing podIPs
 			tracked := false
@@ -181,15 +216,15 @@ func (lb *loadbalancer) checkForUpdate(pods []api.Pod) (bool, map[string]struct{
 		} else {
 			// if untrackedPod is not already tracked, create a new service entry
 			// and set updated to true
-			sv := serviceFromPod(untrackedPod)
+			sv := serviceFromPod(untrackedPod, lb.usePBR)
 			if sv.sni != "" {
 				// update lbConfigWriter
-				lb.services[getSNIName(untrackedPod)] = sv
+				lb.services[getPodRoute(untrackedPod, lb.usePBR)] = sv
 				backend, lbServer := getLoadBalancerComponent(sv)
-				lb.lbConfigWriter.SetBackend(getSNIName(untrackedPod), backend)
+				lb.lbConfigWriter.SetBackend(getPodRoute(untrackedPod, lb.usePBR), backend)
 				lb.lbConfigWriter.AddLbServer(lbServer)
 
-				updatedServices[getSNIName(untrackedPod)] = struct{}{}
+				updatedServices[getPodRoute(untrackedPod, lb.usePBR)] = struct{}{}
 				updated = true
 			}
 		}
@@ -313,21 +348,6 @@ func getPid() string {
 	return string(pidBytes)
 }
 
-// creates load balancer struct based on pods retrieved from
-// a call to the kubernetes API
-func newLb() *loadbalancer {
-	backends := make(map[string]Backend)
-	services := make(map[string]*svc)
-
-	// pass backends map and lbServers to ConfigWriter constructor
-	lbConfig := NewLBConfigWriter(HAPROXY_CONFIG_PATH, getSyslogAddr(), backends, []LBServer{})
-	return &loadbalancer{
-		lbConfigWriter: lbConfig,
-		services:       services,
-		shutdownCh:     make(chan struct{}),
-	}
-}
-
 func getSyslogAddr() string {
 	cmd := exec.Command("ip", "route", "list", "0.0.0.0/0")
 	out, err := cmd.CombinedOutput()
@@ -345,27 +365,11 @@ func ipFromRoute(contents string) string {
 	return ""
 }
 
-func servicesFromPods(pods []api.Pod) map[string]*svc {
-	services := make(map[string]*svc)
-	// create a service for each pod
-	for _, pod := range pods {
-		if trackedSvc, ok := services[getSNIName(pod)]; ok {
-			trackedSvc = appendPod(trackedSvc, pod)
-		} else {
-			sv := serviceFromPod(pod)
-			if sv.sni != "" {
-				services[sv.sni] = sv
-			}
-		}
-	}
-	return services
-}
-
 // create service for a given pod
-func serviceFromPod(pod api.Pod) *svc {
+func serviceFromPod(pod api.Pod, usePBR bool) *svc {
 	return &svc{
 		// sni must be service specific
-		sni:         getSNIName(pod),
+		sni:         getPodRoute(pod, usePBR),
 		trackedPods: map[string]api.PodStatus{pod.Status.PodIP: pod.Status},
 	}
 }
@@ -400,25 +404,4 @@ func listenForTermination(shutdownCh chan struct{}) {
 	<-signalCh
 	glog.Info("Received signal. Exiting")
 	close(shutdownCh)
-}
-
-func lbFromPods(pods *api.PodList) (*loadbalancer, error) {
-	var lbServers []LBServer
-	var lbServer LBServer
-	backends := make(map[string]Backend)
-	services := servicesFromPods(pods.Items)
-
-	// create a backend and LBServer for each service being load balanced
-	for _, sv := range services {
-		backends[sv.sni], lbServer = getLoadBalancerComponent(sv)
-		lbServers = append(lbServers, lbServer)
-	}
-
-	// pass backends map and lbServers to ConfigWriter constructor
-	lbConfig := NewLBConfigWriter(HAPROXY_CONFIG_PATH, getSyslogAddr(), backends, lbServers)
-	return &loadbalancer{
-		lbConfigWriter: lbConfig,
-		services:       services,
-		shutdownCh:     make(chan struct{}),
-	}, nil
 }

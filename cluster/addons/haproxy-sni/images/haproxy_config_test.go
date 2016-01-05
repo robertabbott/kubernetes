@@ -206,7 +206,7 @@ func TestHAPWriteConfigToFile(t *testing.T) {
 	base := NewBaseCfg(HAPROXY_PID_FILE, "127.0.0.1", 4, 256)
 	b := make([]byte, 4096)
 	var buf bytes.Buffer
-	err := writeHAPConfigToFile(backends, servers, base, &buf, HAP_BASE_CFG_TEMPLATE, HAP_BACKEND_TEMPLATE, HAP_SERVER_TEMPLATE, HAP_END_TEMPLATE)
+	err := writeHAPConfigToFile(backends, servers, base, &buf, HAP_BASE_CFG_TEMPLATE, HAP_FRONTEND_TEMPLATE, HAP_BACKEND_TEMPLATE, HAP_SERVER_TEMPLATE, HAP_END_TEMPLATE)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -6,6 +6,43 @@ import (
 	"k8s.io/kubernetes/pkg/api"
 )
 
+func lbFromPods(pods *api.PodList) (*loadbalancer, error) {
+	var lbServers []LBServer
+	var lbServer LBServer
+	backends := make(map[string]Backend)
+	services := servicesFromPods(pods.Items)
+
+	// create a backend and LBServer for each service being load balanced
+	for _, sv := range services {
+		backends[sv.sni], lbServer = getLoadBalancerComponent(sv)
+		lbServers = append(lbServers, lbServer)
+	}
+
+	// pass backends map and lbServers to ConfigWriter constructor
+	lbConfig := NewLBConfigWriter(HAPROXY_CONFIG_PATH, getSyslogAddr(), backends, lbServers)
+	return &loadbalancer{
+		lbConfigWriter: lbConfig,
+		services:       services,
+		shutdownCh:     make(chan struct{}),
+	}, nil
+}
+
+func servicesFromPods(pods []api.Pod) map[string]*svc {
+	services := make(map[string]*svc)
+	// create a service for each pod
+	for _, pod := range pods {
+		if trackedSvc, ok := services[getPodRoute(pod, false)]; ok {
+			trackedSvc = appendPod(trackedSvc, pod)
+		} else {
+			sv := serviceFromPod(pod, false)
+			if sv.sni != "" {
+				services[sv.sni] = sv
+			}
+		}
+	}
+	return services
+}
+
 func newObjectMeta(sni string) api.ObjectMeta {
 	return api.ObjectMeta{
 		Labels: map[string]string{

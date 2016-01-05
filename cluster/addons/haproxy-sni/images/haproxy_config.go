@@ -209,7 +209,7 @@ func (h *HAProxyLB) WriteConfigFile() error {
 	if err != nil {
 		return err
 	}
-	err = writeHAPConfigToFile(h.Backends, h.LBServers, h.Base, file, HAP_BASE_CFG_TEMPLATE, HAP_BACKEND_TEMPLATE, HAP_SERVER_TEMPLATE, HAP_END_TEMPLATE)
+	err = writeHAPConfigToFile(h.Backends, h.LBServers, h.Base, file, HAP_BASE_CFG_TEMPLATE, HAP_FRONTEND_TEMPLATE, HAP_BACKEND_TEMPLATE, HAP_SERVER_TEMPLATE, HAP_END_TEMPLATE)
 	if err != nil {
 		return err
 	}
@@ -217,12 +217,12 @@ func (h *HAProxyLB) WriteConfigFile() error {
 }
 
 // Writes haproxy config file
-func writeHAPConfigToFile(backends map[string]Backend, servers []LBServer, base BaseCfg, file io.Writer, baseTpl, backendTpl, serverTpl, endTpl string) error {
+func writeHAPConfigToFile(backends map[string]Backend, servers []LBServer, base BaseCfg, file io.Writer, baseTpl, feTpl, backendTpl, serverTpl, endTpl string) error {
 	err := writeBaseCfg(base, file, baseTpl)
 	if err != nil {
 		return err
 	}
-	err = writeFrontends(backends, file, HAP_FRONTEND_TEMPLATE)
+	err = writeFrontends(backends, file, feTpl)
 	if err != nil {
 		return err
 	}
