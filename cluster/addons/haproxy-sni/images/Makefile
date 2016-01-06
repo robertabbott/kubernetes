@@ -2,7 +2,7 @@
 
 # The current value of the tag to be used for building and
 # pushing an image to gcr.io
-TAG = 1.0
+TAG = 1.1
 
 haproxy_sni:
 	godep go test .
@@ -10,7 +10,7 @@ haproxy_sni:
 
 build:	haproxy_sni
 	#docker build -t gcr.io/google_containers/haproxy_sni:$(TAG) .
-	docker build -t registry.int.brkt.net/brkt/haproxy-sni:v1.0 .
+	docker build -t registry.int.brkt.net/brkt/haproxy-sni:v$(TAG) .
 
 push: build
 	docker push registry.int.brkt.net/brkt/haproxy-sni

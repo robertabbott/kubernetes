@@ -150,7 +150,8 @@ func getPodRoute(pod api.Pod, usePBR bool) string {
 // the pods change
 func (lb *loadbalancer) monitorPods(interval time.Duration, kube_client *client.Client, updateCh chan map[string]struct{}, shutdownCh chan struct{}) {
 	// send first update immediately
-	podlist, err := kube_client.Pods(api.NamespaceAll).List(labels.Everything(), fields.Everything())
+	readySelector := fields.OneTermEqualSelector("Status", "Running")
+	podlist, err := kube_client.Pods(api.NamespaceAll).List(labels.Everything(), readySelector)
 	if err != nil {
 		glog.Warning(err)
 	}
@@ -200,7 +201,7 @@ func (lb *loadbalancer) checkForUpdate(pods []api.Pod) (bool, map[string]struct{
 		// if this service is already monitored check if the untrackedPod is new
 		if monitoredService, ok := lb.services[getPodRoute(untrackedPod, lb.usePBR)]; ok {
 			// if untrackedPod has an existing sni and a new podIP
-			// it is append to the existing podIPs
+			// it is appended to the existing trackedPods
 			tracked := false
 			for podIP, _ := range monitoredService.trackedPods {
 				if podIP == untrackedPod.Status.PodIP {
@@ -246,7 +247,9 @@ func (lb *loadbalancer) removeDefunctPods(pods []api.Pod, updatedServices map[st
 		newTrackedPods := make(map[string]api.PodStatus)
 		for _, pod := range pods {
 			if trackedPod, ok := svc.trackedPods[pod.Status.PodIP]; ok {
-				newTrackedPods[pod.Status.PodIP] = trackedPod
+				if svc.sni == getPodRoute(pod, lb.usePBR) {
+					newTrackedPods[pod.Status.PodIP] = trackedPod
+				}
 			}
 		}
 		// if this service no longer has any pods associated with it

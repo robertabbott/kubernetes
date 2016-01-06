@@ -143,7 +143,9 @@ type LBServer struct {
 func NewBackends(m map[string]Backend) *backends {
 	b := []Backend{}
 	for _, backend := range m {
-		b = append(b, backend)
+		if backend.SNI != "" {
+			b = append(b, backend)
+		}
 	}
 	return &backends{
 		BackendList: b,

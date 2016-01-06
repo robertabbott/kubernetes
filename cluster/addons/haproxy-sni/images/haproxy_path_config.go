@@ -12,8 +12,9 @@ frontend http
     option dontlognull
     option httpchk
     log global
+    default_backend path_based_app_old_yeti_api
 
-{{range .BackendList}}    acl application_{{.Name}} path_reg -i {{.SNI}}
+{{range .BackendList}}    acl application_{{.Name}} path_reg -i {{.SNI}}*
 {{end}}
 {{range .BackendList}}    use_backend path_based_app_{{.Name}} if application_{{.Name}}
 {{end}}`
@@ -40,6 +41,19 @@ type HAProxyPBLB struct {
 
 // LBConfig constructor
 func NewPBLBConfigWriter(cfgFile, syslogAddr string, backends map[string]Backend, servers []LBServer) LBConfigWriter {
+	// add default route
+	backends["old_yeti_api"] = Backend{
+		Name: "old_yeti_api",
+		SNI:  "",
+		Servers: []*Server{
+			&Server{
+				// brkt-specific af
+				Host: "yetiapi.internal", // blb.*
+				Port: SVC_PORT,           // 443
+			},
+		},
+	}
+
 	return &HAProxyPBLB{
 		Base:           NewBaseCfg(HAPROXY_PID_FILE, syslogAddr, 4, 256),
 		Backends:       backends,

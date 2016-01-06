@@ -30,4 +30,4 @@ COPY haproxy-monitor /bin/
 EXPOSE 80 443
 
 # Define default command.
-CMD ["/usr/bin/supervisord"]
+CMD ["/bin/haproxy-monitor"]

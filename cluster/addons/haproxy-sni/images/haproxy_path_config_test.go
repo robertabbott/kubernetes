@@ -23,9 +23,10 @@ frontend http
     option dontlognull
     option httpchk
     log global
+    default_backend path_based_app_old_yeti_api
 
-    acl application_backend1 path_reg -i blb.
-    acl application_backend0 path_reg -i blb.
+    acl application_backend1 path_reg -i blb.*
+    acl application_backend0 path_reg -i blb.*
 
     use_backend path_based_app_backend1 if application_backend1
     use_backend path_based_app_backend0 if application_backend0
@@ -36,9 +37,10 @@ frontend http
     option dontlognull
     option httpchk
     log global
+    default_backend path_based_app_old_yeti_api
 
-    acl application_backend0 path_reg -i blb.
-    acl application_backend1 path_reg -i blb.
+    acl application_backend0 path_reg -i blb.*
+    acl application_backend1 path_reg -i blb.*
 
     use_backend path_based_app_backend0 if application_backend0
     use_backend path_based_app_backend1 if application_backend1

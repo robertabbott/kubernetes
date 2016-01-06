@@ -108,6 +108,30 @@ func TestCheckForUpdate(t *testing.T) {
 	}
 }
 
+func TestCheckForUpdateReuseIPs(t *testing.T) {
+	lb, err := lbFromPods(createPodList())
+	if err != nil {
+		t.Fatal("lbFromPods failed somehow which means you really done goofed")
+	}
+	updated, updatedPods := lb.checkForUpdate(createPods())
+	if !updated {
+		t.Fatal("checkForUpdate returned False when one pod was added")
+	}
+	if _, ok := updatedPods["odinSni"]; !ok {
+		t.Fatal("checkForUpdate marked the wrong pods for update ", updatedPods)
+	}
+	// remove odin pod and assign odin IP to seamus pod
+	pods := createPods()[:1]
+	pods[len(pods)-1].Status.PodIP = "odin"
+	updated, updatedPods = lb.checkForUpdate(pods)
+	if !updated {
+		t.Fatal("checkForUpdate returned False when two pods were removed")
+	}
+	if _, ok := updatedPods["seamusSni"]; !ok {
+		t.Fatal("checkForUpdate marked the wrong pods for update")
+	}
+}
+
 func TestRemoveDefunctPods(t *testing.T) {
 	lb, err := lbFromPods(createPodList())
 	if err != nil {
