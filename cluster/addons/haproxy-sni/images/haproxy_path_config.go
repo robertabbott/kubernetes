@@ -66,6 +66,10 @@ func (h *HAProxyPBLB) GetBackends() map[string]Backend {
 	return h.Backends
 }
 
+func (h *HAProxyPBLB) SetBackends(backends map[string]Backend) {
+	h.Backends = backends
+}
+
 func (h *HAProxyPBLB) SetSyslogAddr(addr string) {
 	h.Base.SyslogAddr = addr
 }

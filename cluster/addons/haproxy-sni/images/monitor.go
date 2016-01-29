@@ -97,7 +97,7 @@ func main() {
 	flag.Parse()
 
 	shutdownMainCh := make(chan struct{})
-	updateCh := make(chan map[string]struct{})
+	updateCh := make(chan []api.Pod)
 
 	kube_client, err := client.NewInCluster()
 	if err != nil {
@@ -117,10 +117,10 @@ func main() {
 	for {
 		select {
 		// gets name of updated service from updateCh
-		case updatedServices := <-updateCh:
-			glog.Info("updating services: ", updatedServices)
+		case pods := <-updateCh:
+			glog.Info("change in pods detected. updating config")
 			// rewrite config + invoke haproxy to reload config
-			err := lb.rewriteConfig(updatedServices)
+			err := lb.rewriteConfig(pods)
 			if err != nil {
 				glog.Warning(err)
 			}
@@ -148,16 +148,15 @@ func getPodRoute(pod api.Pod, usePBR bool) string {
 
 // monitors pods in this k8s instance and triggers an update when
 // the pods change
-func (lb *loadbalancer) monitorPods(interval time.Duration, kube_client *client.Client, updateCh chan map[string]struct{}, shutdownCh chan struct{}) {
+func (lb *loadbalancer) monitorPods(interval time.Duration, kube_client *client.Client, updateCh chan []api.Pod, shutdownCh chan struct{}) {
 	// send first update immediately
-	readySelector := fields.OneTermEqualSelector("Status", "Running")
-	podlist, err := kube_client.Pods(api.NamespaceAll).List(labels.Everything(), readySelector)
+	podlist, err := kube_client.Pods(api.NamespaceAll).List(labels.Everything(), fields.Everything())
 	if err != nil {
 		glog.Warning(err)
 	}
-	updated, updatedServices := lb.checkForUpdate(podlist.Items)
+	updated := lb.checkForUpdate(podlist.Items)
 	if updated {
-		updateCh <- updatedServices
+		updateCh <- podlist.Items
 	}
 
 	// sit in loop forever checking for updates
@@ -176,9 +175,9 @@ func (lb *loadbalancer) monitorPods(interval time.Duration, kube_client *client.
 			} else {
 				// only update if pods are found and no error is
 				// returned from the api call to kubernetes
-				updated, updatedServices := lb.checkForUpdate(podlist.Items)
+				updated := lb.checkForUpdate(podlist.Items)
 				if updated {
-					updateCh <- updatedServices
+					updateCh <- podlist.Items
 				}
 			}
 		case <-shutdownCh:
@@ -189,10 +188,10 @@ func (lb *loadbalancer) monitorPods(interval time.Duration, kube_client *client.
 
 // check if contents of old and new slices are the same
 // returns true if there is a change
-func (lb *loadbalancer) checkForUpdate(pods []api.Pod) (bool, map[string]struct{}) {
+func (lb *loadbalancer) checkForUpdate(pods []api.Pod) bool {
 	updated := false
-	updatedServices := make(map[string]struct{})
 
+	backends := lb.lbConfigWriter.GetBackends()
 	// check each pod returned by the api call
 	for _, untrackedPod := range pods {
 		if untrackedPod.Status.PodIP == "" {
@@ -203,15 +202,14 @@ func (lb *loadbalancer) checkForUpdate(pods []api.Pod) (bool, map[string]struct{
 			// if untrackedPod has an existing sni and a new podIP
 			// it is appended to the existing trackedPods
 			tracked := false
-			for podIP, _ := range monitoredService.trackedPods {
-				if podIP == untrackedPod.Status.PodIP {
+			servers := backends[monitoredService.sni].Servers
+			for _, server := range servers {
+				if untrackedPod.Status.PodIP == server.Host {
 					tracked = true
 				}
 			}
 			// if untrackedPod is not tracked, append it to the list of tracked pods
 			if !tracked {
-				lb.services[monitoredService.sni] = appendPod(lb.services[monitoredService.sni], untrackedPod)
-				updatedServices[monitoredService.sni] = struct{}{}
 				updated = true
 			}
 		} else {
@@ -219,29 +217,23 @@ func (lb *loadbalancer) checkForUpdate(pods []api.Pod) (bool, map[string]struct{
 			// and set updated to true
 			sv := serviceFromPod(untrackedPod, lb.usePBR)
 			if sv.sni != "" {
-				// update lbConfigWriter
+				// update lbConfigWriter with new service
 				lb.services[getPodRoute(untrackedPod, lb.usePBR)] = sv
-				backend, lbServer := getLoadBalancerComponent(sv)
-				lb.lbConfigWriter.SetBackend(getPodRoute(untrackedPod, lb.usePBR), backend)
+				lbServer := getLoadBalancerComponent(sv)
 				lb.lbConfigWriter.AddLbServer(lbServer)
-
-				updatedServices[getPodRoute(untrackedPod, lb.usePBR)] = struct{}{}
 				updated = true
 			}
 		}
 	}
 
 	// check if any services no longer have alive pods
-	removed, updatedServices := lb.removeDefunctPods(pods, updatedServices)
-	if removed || updated {
-		return true, updatedServices
-	}
-	return false, updatedServices
+	removed := lb.checkForDeadPods(pods)
+	return removed || updated
 }
 
 // remove pods being tracked that were not included in
 // the result of the most recent API call.
-func (lb *loadbalancer) removeDefunctPods(pods []api.Pod, updatedServices map[string]struct{}) (bool, map[string]struct{}) {
+func (lb *loadbalancer) checkForDeadPods(pods []api.Pod) bool {
 	updated := false
 	for _, svc := range lb.services {
 		newTrackedPods := make(map[string]api.PodStatus)
@@ -255,52 +247,41 @@ func (lb *loadbalancer) removeDefunctPods(pods []api.Pod, updatedServices map[st
 		// if this service no longer has any pods associated with it
 		if len(newTrackedPods) == 0 {
 			delete(lb.services, svc.sni)
-			updatedServices[svc.sni] = struct{}{}
 			updated = true
 		} else if !reflect.DeepEqual(svc.trackedPods, newTrackedPods) {
 			// if the updated list of pods doesnt match the already tracked pods
 			// remove tracked pods that no longer exist
-			lb.services[svc.sni].trackedPods = newTrackedPods
-			updatedServices[svc.sni] = struct{}{}
 			updated = true
 		}
 	}
-	return updated, updatedServices
+	return updated
 }
 
 // rewrites lbconfig struct after a change in pods is detected
 // updates then calls LbConfigWriter.WriteConfigFile()
-func (lb *loadbalancer) rewriteConfig(updatedServices map[string]struct{}) error {
+func (lb *loadbalancer) rewriteConfig(pods []api.Pod) error {
 	var newBackend Backend
-	backends := lb.lbConfigWriter.GetBackends()
-	// generate new list of servers from updated pods
-	for svcName, _ := range updatedServices {
+	// reset backends
+	lb.lbConfigWriter.SetBackends(make(map[string]Backend))
+	// for each service check for pods whose sni matches the service's
+	for _, svc := range lb.services {
 		servers := []*Server{}
-		// if service has been removed, delete its backend
-		// otherwise update it
-		if _, ok := lb.services[svcName]; !ok {
-			lb.lbConfigWriter.RemoveBackend(svcName)
-		} else {
-			for _, trackedPod := range lb.services[svcName].trackedPods {
+		for _, pod := range pods {
+			// if pod matches the route of svc append to server list
+			if getPodRoute(pod, lb.usePBR) == svc.sni {
 				servers = append(servers, &Server{
-					Host: trackedPod.PodIP,
+					Host: pod.Status.PodIP,
 					Port: SVC_PORT,
 				})
 			}
-			// if backend exists for this service update that
-			if backend, ok := backends[svcName]; ok {
-				newBackend = backend
-				newBackend.Servers = servers
-			} else {
-				// else create a new backend for this service
-				sv := lb.services[svcName]
-				newBackend = Backend{
-					Name:    sv.sni,
-					SNI:     fmt.Sprintf("%s.", sv.sni),
-					Servers: servers,
-				}
+		}
+		if len(servers) > 0 {
+			newBackend = Backend{
+				Name:    svc.sni,
+				SNI:     fmt.Sprintf("%s.", svc.sni),
+				Servers: servers,
 			}
-			lb.lbConfigWriter.SetBackend(svcName, newBackend)
+			lb.lbConfigWriter.SetBackend(svc.sni, newBackend)
 		}
 	}
 	return lb.lbConfigWriter.WriteConfigFile()
@@ -387,16 +368,10 @@ func appendPod(s *svc, pod api.Pod) *svc {
 // each service will have its own LBServer listen on a config-specified
 // port and a Backend which lists servers in the autoscaling group associated
 // with that service
-func getLoadBalancerComponent(sv *svc) (Backend, LBServer) {
-	backend := Backend{
-		Name:    sv.sni,
-		SNI:     fmt.Sprintf("%s.", sv.sni),
-		Servers: []*Server{},
-	}
-	server := LBServer{
+func getLoadBalancerComponent(sv *svc) LBServer {
+	return LBServer{
 		BackendName: sv.sni,
 	}
-	return backend, server
 }
 
 // On SIGTERM signals monitor routines to shutdown

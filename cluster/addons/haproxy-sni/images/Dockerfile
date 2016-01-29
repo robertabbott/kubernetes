@@ -15,8 +15,6 @@ RUN \
   sed -i 's/^ENABLED=.*/ENABLED=1/' /etc/default/haproxy && \
   rm -rf /var/lib/apt/lists/*
 
-COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
-
 # create pid file
 RUN touch /haproxy.pid /haproxy.cfg
 

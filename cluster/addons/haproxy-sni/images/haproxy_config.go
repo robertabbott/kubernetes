@@ -84,6 +84,7 @@ type LBConfigWriter interface {
 	WriteConfigFile() error
 	GetBackends() map[string]Backend
 	SetBackend(string, Backend)
+	SetBackends(backends map[string]Backend)
 	RemoveBackend(string)
 	SetSyslogAddr(string)
 	AddLbServer(LBServer)
@@ -188,6 +189,10 @@ func (h *HAProxyLB) SetSyslogAddr(addr string) {
 
 func (h *HAProxyLB) AddLbServer(lbs LBServer) {
 	h.LBServers = append(h.LBServers, lbs)
+}
+
+func (h *HAProxyLB) SetBackends(backends map[string]Backend) {
+	h.Backends = backends
 }
 
 func (h *HAProxyLB) SetBackend(path string, backend Backend) {
