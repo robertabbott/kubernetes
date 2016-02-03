@@ -30,7 +30,7 @@
             "name": "haproxy-pbr",
             "image": "registry.int.brkt.net/brkt/haproxy-pbr:v1.0",
             "imagePullPolicy": "Always",
-            "command": ["/bin/haproxy-monitor", "-usePBR=true"],
+            "command": ["/bin/haproxy-monitor", "-usePBR=true", "-svcPort=8888"],
             "ports": [{
                "containerPort": 8000,
                "hostPort": 8000

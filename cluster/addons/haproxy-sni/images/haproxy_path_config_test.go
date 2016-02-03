@@ -26,7 +26,7 @@ frontend pbr
     option httpchk
     option httplog
     log global
-    default_backend path_based_app_old_yeti_api
+    default_backend path_based_app_default_service
 
     acl application_backend1 path_sub api/v1/blb.
     acl application_backend0 path_sub api/v1/blb.
@@ -42,7 +42,7 @@ frontend pbr
     option httpchk
     option httplog
     log global
-    default_backend path_based_app_old_yeti_api
+    default_backend path_based_app_default_service
 
     acl application_backend0 path_sub api/v1/blb.
     acl application_backend1 path_sub api/v1/blb.

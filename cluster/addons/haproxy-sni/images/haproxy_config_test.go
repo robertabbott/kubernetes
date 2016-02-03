@@ -71,7 +71,7 @@ frontend sni
     mode tcp
     option tcplog
     option dontlognull
-	option httpchk
+    option httpchk
     log global
 
     capture request header Host len 20
@@ -92,7 +92,7 @@ frontend sni
     mode tcp
     option tcplog
     option dontlognull
-	option httpchk
+    option httpchk
     log global
 
     capture request header Host len 20

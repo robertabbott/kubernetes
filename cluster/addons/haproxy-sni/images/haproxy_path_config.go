@@ -26,7 +26,7 @@ frontend pbr
     option httpchk
     option httplog
     log global
-    default_backend path_based_app_old_yeti_api
+    default_backend path_based_app_default_service
 
 {{range .BackendList}}    acl application_{{.Name}} path_sub api/v1/{{.SNI}}
 {{end}}
@@ -56,19 +56,6 @@ type HAProxyPBLB struct {
 
 // LBConfig constructor
 func NewPBLBConfigWriter(cfgFile, syslogAddr string, backends map[string]Backend, servers []LBServer) LBConfigWriter {
-	// add default route
-	backends["old_yeti_api"] = Backend{
-		Name: "old_yeti_api",
-		SNI:  "",
-		Servers: []*Server{
-			&Server{
-				// brkt-specific af
-				Host: "yetiapi.internal", // blb.*
-				Port: SVC_PORT,           // 443
-			},
-		},
-	}
-
 	return &HAProxyPBLB{
 		Base:           NewBaseCfg(HAPROXY_PID_FILE, syslogAddr, 4, 256),
 		Backends:       backends,

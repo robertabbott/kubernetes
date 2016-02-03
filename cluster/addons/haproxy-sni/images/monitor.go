@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"reflect"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -22,22 +23,20 @@ import (
 )
 
 const (
-	ARBITRARY_DEFAULT_WORKER_POLL_INTERVAL = 30 * time.Second
-	MAX_RETRIES                            = 5
-	HAPROXY_NAME                           = "haproxy-sni-name"
-	HAPROXY_EXPOSE                         = "haproxy-sni-expose"
-	HAPROXY_PATH_NAME                      = "haproxy-pbr-name"
-	HAPROXY_PATH_EXPOSE                    = "haproxy-pbr-expose"
+	MAX_RETRIES         = 5
+	HAPROXY_NAME        = "haproxy-sni-name"
+	HAPROXY_EXPOSE      = "haproxy-sni-expose"
+	HAPROXY_PATH_NAME   = "haproxy-pbr-name"
+	HAPROXY_PATH_EXPOSE = "haproxy-pbr-expose"
 )
-
-// All services listen on port 443
-const SVC_PORT = 443
-const PBR_PORT = 8888
 
 type loadbalancer struct {
 	// if true write path-based routing config
 	// if false write sni routing config
 	usePBR bool
+
+	// port to route to for backend services
+	svcPort int
 
 	// one ConfigWriter per instance. ConfigWriter has
 	// separate lbServers for each service. Each
@@ -54,24 +53,16 @@ type loadbalancer struct {
 	shutdownCh chan struct{}
 }
 
-// creates load balancer struct that config for
-// services using SNI routing
-func newSNILb() *loadbalancer {
-	lbConfig := NewLBConfigWriter(HAPROXY_CONFIG_PATH, getSyslogAddr(), make(map[string]Backend), []LBServer{})
-	return &loadbalancer{
-		usePBR:         false,
-		lbConfigWriter: lbConfig,
-		services:       make(map[string]*svc),
-		shutdownCh:     make(chan struct{}),
+func newLb(usePBR bool, svcPort int) *loadbalancer {
+	var lbConfig LBConfigWriter
+	if usePBR {
+		lbConfig = NewPBLBConfigWriter(HAPROXY_CONFIG_PATH, getSyslogAddr(), make(map[string]Backend), []LBServer{})
+	} else {
+		lbConfig = NewLBConfigWriter(HAPROXY_CONFIG_PATH, getSyslogAddr(), make(map[string]Backend), []LBServer{})
 	}
-}
-
-// creates load balancer struct that config for
-// services using path based routing
-func newPathBasedLb() *loadbalancer {
-	lbConfig := NewPBLBConfigWriter(HAPROXY_CONFIG_PATH, getSyslogAddr(), make(map[string]Backend), []LBServer{})
 	return &loadbalancer{
-		usePBR:         true,
+		usePBR:         usePBR,
+		svcPort:        svcPort,
 		lbConfigWriter: lbConfig,
 		services:       make(map[string]*svc),
 		shutdownCh:     make(chan struct{}),
@@ -94,8 +85,12 @@ type svc struct {
 // a config reload.
 func main() {
 	var usePBR = flag.Bool("usePBR", false, "Indicates if path based routing should be used. Default is to use SNI")
+	var svcPort = flag.Int("svcPort", 443, "Port to route to for backend services")
+	var pollInterval = flag.Int("pollInterval", 30, "Worker poll interval in seconds")
 	var lb *loadbalancer
 	flag.Parse()
+
+	pollIntervalTime := time.Duration(*pollInterval) * time.Second
 
 	shutdownMainCh := make(chan struct{})
 	updateCh := make(chan []api.Pod)
@@ -105,13 +100,8 @@ func main() {
 		glog.Fatalf("Unable to connect to kubernetes api server: %v", err)
 	}
 
-	if *usePBR {
-		lb = newPathBasedLb()
-	} else {
-		lb = newSNILb()
-	}
-
-	go lb.monitorPods(ARBITRARY_DEFAULT_WORKER_POLL_INTERVAL, kube_client, updateCh, shutdownMainCh)
+	lb = newLb(*usePBR, *svcPort)
+	go lb.monitorPods(pollIntervalTime, kube_client, updateCh, shutdownMainCh)
 
 	// listen for SIGTERM
 	go listenForTermination(shutdownMainCh)
@@ -155,8 +145,7 @@ func (lb *loadbalancer) monitorPods(interval time.Duration, kube_client *client.
 	if err != nil {
 		glog.Warning(err)
 	}
-	updated := lb.checkForUpdate(podlist.Items)
-	if updated {
+	if lb.checkForUpdate(podlist.Items) {
 		updateCh <- podlist.Items
 	}
 
@@ -176,8 +165,7 @@ func (lb *loadbalancer) monitorPods(interval time.Duration, kube_client *client.
 			} else {
 				// only update if pods are found and no error is
 				// returned from the api call to kubernetes
-				updated := lb.checkForUpdate(podlist.Items)
-				if updated {
+				if lb.checkForUpdate(podlist.Items) {
 					updateCh <- podlist.Items
 				}
 			}
@@ -270,21 +258,14 @@ func (lb *loadbalancer) rewriteConfig(pods []api.Pod) error {
 		for _, pod := range pods {
 			// if pod matches the route of svc append to server list
 			if getPodRoute(pod, lb.usePBR) == svc.sni {
-				port := SVC_PORT
-				if lb.usePBR {
-					port = PBR_PORT
-				}
 				servers = append(servers, &Server{
 					Host: pod.Status.PodIP,
-					Port: port,
+					Port: lb.svcPort,
 				})
 			}
 		}
 		if len(servers) > 0 {
 			if lb.usePBR {
-				if svc.sni == "default_service" {
-					svc.sni = "old_yeti_api"
-				}
 				newBackend = Backend{
 					Name:    svc.sni,
 					SNI:     fmt.Sprintf("%s", svc.sni),
@@ -325,6 +306,29 @@ func notifyHAProxy() error {
 		}
 		time.Sleep(time.Duration(count) * time.Second)
 		err = cmd.Run()
+	}
+	if err != nil {
+		return err
+	}
+	pid, err := strconv.Atoi(strings.Replace(pidString, "\n", "", -1))
+	if err != nil {
+		return err
+	}
+	return killDefunctProcess(pid)
+}
+
+// zombie processes occur after haproxy reloads config
+// because haproxy forks and the monitor cant track the
+// grandchild process. This method find the zombie haproxy
+// process and calls wait() which allows the zombie to die
+func killDefunctProcess(pid int) error {
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	state, err := proc.Wait()
+	if !state.Exited() {
+		glog.Warning(state.String())
 	}
 	return err
 }
@@ -373,12 +377,6 @@ func serviceFromPod(pod api.Pod, usePBR bool) *svc {
 		sni:         getPodRoute(pod, usePBR),
 		trackedPods: map[string]api.PodStatus{pod.Status.PodIP: pod.Status},
 	}
-}
-
-// add pod to existing service
-func appendPod(s *svc, pod api.Pod) *svc {
-	s.trackedPods[pod.Status.PodIP] = pod.Status
-	return s
 }
 
 // create haproxy Backend and LBServer struct for a given service

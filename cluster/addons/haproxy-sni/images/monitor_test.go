@@ -7,6 +7,12 @@ import (
 	"k8s.io/kubernetes/pkg/api"
 )
 
+// add pod to existing service
+func appendPod(s *svc, pod api.Pod) *svc {
+	s.trackedPods[pod.Status.PodIP] = pod.Status
+	return s
+}
+
 func lbFromPods(pods *api.PodList) (*loadbalancer, error) {
 	var lbServers []LBServer
 	var lbServer LBServer
