@@ -4,23 +4,38 @@ import (
 	"os"
 )
 
-// HAProxy listens on port 8000 for unencrypted
+const HAP_BASE_CFG_TEMPLATE_PBR = `
+global
+    daemon
+    pidfile {{.PidFile}}
+    log {{.SyslogAddr}} local0 debug
+
+defaults
+    timeout connect 5000
+    timeout client  50000
+    timeout server  50000
+`
+
+// HAProxy listens on port 8888 for unencrypted
 // http traffic and routes based on path
 const HAP_FRONTEND_PATH_TEMPLATE = `
-frontend http
-    bind *:8000
+frontend pbr
+    mode http
+    bind *:8888
     option dontlognull
     option httpchk
+    option httplog
     log global
     default_backend path_based_app_old_yeti_api
 
-{{range .BackendList}}    acl application_{{.Name}} path_reg -i {{.SNI}}*
+{{range .BackendList}}    acl application_{{.Name}} path_sub api/v1/{{.SNI}}
 {{end}}
 {{range .BackendList}}    use_backend path_based_app_{{.Name}} if application_{{.Name}}
 {{end}}`
 
 const HAP_BACKEND_PATH_TEMPLATE = `
 backend path_based_app_{{.Name}}
+    mode http
     balance roundrobin
 
 {{range .Servers}}    server server{{.Host}}{{.Port}} {{.}}
@@ -99,7 +114,7 @@ func (h *HAProxyPBLB) WriteConfigFile() error {
 	if err != nil {
 		return err
 	}
-	err = writeHAPConfigToFile(h.Backends, h.LBServers, h.Base, file, HAP_BASE_CFG_TEMPLATE, HAP_FRONTEND_PATH_TEMPLATE, HAP_BACKEND_PATH_TEMPLATE, HAP_SERVER_TEMPLATE, HAP_END_TEMPLATE)
+	err = writeHAPConfigToFile(h.Backends, h.LBServers, h.Base, file, HAP_BASE_CFG_TEMPLATE_PBR, HAP_FRONTEND_PATH_TEMPLATE, HAP_BACKEND_PATH_TEMPLATE, HAP_SERVER_TEMPLATE, HAP_END_TEMPLATE)
 	if err != nil {
 		return err
 	}

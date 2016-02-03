@@ -32,6 +32,7 @@ const (
 
 // All services listen on port 443
 const SVC_PORT = 443
+const PBR_PORT = 8888
 
 type loadbalancer struct {
 	// if true write path-based routing config
@@ -269,21 +270,37 @@ func (lb *loadbalancer) rewriteConfig(pods []api.Pod) error {
 		for _, pod := range pods {
 			// if pod matches the route of svc append to server list
 			if getPodRoute(pod, lb.usePBR) == svc.sni {
+				port := SVC_PORT
+				if lb.usePBR {
+					port = PBR_PORT
+				}
 				servers = append(servers, &Server{
 					Host: pod.Status.PodIP,
-					Port: SVC_PORT,
+					Port: port,
 				})
 			}
 		}
 		if len(servers) > 0 {
-			newBackend = Backend{
-				Name:    svc.sni,
-				SNI:     fmt.Sprintf("%s.", svc.sni),
-				Servers: servers,
+			if lb.usePBR {
+				if svc.sni == "default_service" {
+					svc.sni = "old_yeti_api"
+				}
+				newBackend = Backend{
+					Name:    svc.sni,
+					SNI:     fmt.Sprintf("%s", svc.sni),
+					Servers: servers,
+				}
+			} else {
+				newBackend = Backend{
+					Name:    svc.sni,
+					SNI:     fmt.Sprintf("%s.", svc.sni),
+					Servers: servers,
+				}
 			}
 			lb.lbConfigWriter.SetBackend(svc.sni, newBackend)
 		}
 	}
+
 	return lb.lbConfigWriter.WriteConfigFile()
 }
 

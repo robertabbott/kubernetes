@@ -12,35 +12,40 @@ const (
     server server_backend1 backend1:1`
 	HAPPB_BACKENDS = `
 backend path_based_app_backend0
+    mode http
     balance roundrobin
 
     server server127.0.0.17000 127.0.0.1:7000
 
 `
 	HAPPB_FE = `
-frontend http
-    bind *:8000
+frontend pbr
+    mode http
+    bind *:8888
     option dontlognull
     option httpchk
+    option httplog
     log global
     default_backend path_based_app_old_yeti_api
 
-    acl application_backend1 path_reg -i blb.*
-    acl application_backend0 path_reg -i blb.*
+    acl application_backend1 path_sub api/v1/blb.
+    acl application_backend0 path_sub api/v1/blb.
 
     use_backend path_based_app_backend1 if application_backend1
     use_backend path_based_app_backend0 if application_backend0
 `
 	HAPPB_FE2 = `
-frontend http
-    bind *:8000
+frontend pbr
+    mode http
+    bind *:8888
     option dontlognull
     option httpchk
+    option httplog
     log global
     default_backend path_based_app_old_yeti_api
 
-    acl application_backend0 path_reg -i blb.*
-    acl application_backend1 path_reg -i blb.*
+    acl application_backend0 path_sub api/v1/blb.
+    acl application_backend1 path_sub api/v1/blb.
 
     use_backend path_based_app_backend0 if application_backend0
     use_backend path_based_app_backend1 if application_backend1
@@ -121,6 +126,7 @@ func TestHAPPBWriteFrontend(t *testing.T) {
 	}
 	s := trimZeros(b)
 	if s != HAPPB_FE && s != HAPPB_FE2 {
+		t.Fatal(s)
 		t.Fatal("writeFrontends wrote an incorrect result")
 	}
 }
