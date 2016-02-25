@@ -137,11 +137,22 @@ func getPodRoute(pod api.Pod, usePBR bool) string {
 	return pod.ObjectMeta.Labels[HAPROXY_NAME]
 }
 
+func getRunningPods(pods []api.Pod) []api.Pod {
+	runningPods := []api.Pod{}
+	for _, pod := range pods {
+		if pod.Status.Phase == api.PodRunning {
+			runningPods = append(runningPods, pod)
+		}
+	}
+	return runningPods
+}
+
 // monitors pods in this k8s instance and triggers an update when
 // the pods change
 func (lb *loadbalancer) monitorPods(interval time.Duration, kube_client *client.Client, updateCh chan []api.Pod, shutdownCh chan struct{}) {
 	// send first update immediately
 	podlist, err := kube_client.Pods(api.NamespaceAll).List(labels.Everything(), fields.Everything())
+	podlist.Items = getRunningPods(podlist.Items)
 	if err != nil {
 		glog.Warning(err)
 	}
@@ -157,6 +168,7 @@ func (lb *loadbalancer) monitorPods(interval time.Duration, kube_client *client.
 		case <-time.After(interval + (time.Duration(rand.Intn(10)) * time.Second)):
 			// get up to date pods
 			podlist, err := kube_client.Pods(api.NamespaceAll).List(labels.Everything(), fields.Everything())
+			podlist.Items = getRunningPods(podlist.Items)
 			if err != nil {
 				// probably don't want this routine to die on failed lookup
 				glog.Warning(err)
