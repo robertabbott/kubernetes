@@ -322,6 +322,9 @@ func notifyHAProxy() error {
 	if err != nil {
 		return err
 	}
+	if pidString == "" {
+		return nil
+	}
 	pid, err := strconv.Atoi(strings.Replace(pidString, "\n", "", -1))
 	if err != nil {
 		return err
