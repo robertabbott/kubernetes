@@ -76,6 +76,8 @@ type svc struct {
 	// Internal information about containers. ContainerPort
 	// and PodIP will be used to construct backends for
 	// the loadbalancer to talk to this service
+
+	// maps PodIP to pod
 	trackedPods map[string]api.PodStatus
 }
 
@@ -140,7 +142,8 @@ func getPodRoute(pod api.Pod, usePBR bool) string {
 func getRunningPods(pods []api.Pod) []api.Pod {
 	runningPods := []api.Pod{}
 	for _, pod := range pods {
-		if pod.Status.Phase == api.PodRunning {
+		_, ok := pod.ObjectMeta.Labels[HAPROXY_NAME]
+		if pod.Status.Phase == api.PodRunning && ok {
 			runningPods = append(runningPods, pod)
 		}
 	}
@@ -152,12 +155,11 @@ func getRunningPods(pods []api.Pod) []api.Pod {
 func (lb *loadbalancer) monitorPods(interval time.Duration, kube_client *client.Client, updateCh chan []api.Pod, shutdownCh chan struct{}) {
 	// send first update immediately
 	podlist, err := kube_client.Pods(api.NamespaceAll).List(labels.Everything(), fields.Everything())
-	podlist.Items = getRunningPods(podlist.Items)
 	if err != nil {
 		glog.Warning(err)
 	}
 	if lb.checkForUpdate(podlist.Items) {
-		updateCh <- podlist.Items
+		updateCh <- getRunningPods(podlist.Items)
 	}
 
 	// sit in loop forever checking for updates
@@ -168,17 +170,14 @@ func (lb *loadbalancer) monitorPods(interval time.Duration, kube_client *client.
 		case <-time.After(interval + (time.Duration(rand.Intn(10)) * time.Second)):
 			// get up to date pods
 			podlist, err := kube_client.Pods(api.NamespaceAll).List(labels.Everything(), fields.Everything())
-			podlist.Items = getRunningPods(podlist.Items)
 			if err != nil {
 				// probably don't want this routine to die on failed lookup
 				glog.Warning(err)
-			} else if len(podlist.Items) == 0 {
-				glog.Warning("No pods found")
 			} else {
 				// only update if pods are found and no error is
 				// returned from the api call to kubernetes
 				if lb.checkForUpdate(podlist.Items) {
-					updateCh <- podlist.Items
+					updateCh <- getRunningPods(podlist.Items)
 				}
 			}
 		case <-shutdownCh:
@@ -191,23 +190,23 @@ func (lb *loadbalancer) monitorPods(interval time.Duration, kube_client *client.
 // returns true if there is a change
 func (lb *loadbalancer) checkForUpdate(pods []api.Pod) bool {
 	updated := false
+	pods = getRunningPods(pods)
+	if len(pods) == 0 {
+		glog.Warning("No running pods found")
+		return false
+	}
 
-	backends := lb.lbConfigWriter.GetBackends()
 	// check each pod returned by the api call
 	for _, untrackedPod := range pods {
 		if untrackedPod.Status.PodIP == "" {
 			continue
 		}
-		// if this service is already monitored check if the untrackedPod is new
+		// check if the untrackedPod is a for an untracked service
 		if monitoredService, ok := lb.services[getPodRoute(untrackedPod, lb.usePBR)]; ok {
-			// if untrackedPod has an existing sni and a new podIP
-			// it is appended to the existing trackedPods
 			tracked := false
-			servers := backends[monitoredService.sni].Servers
-			for _, server := range servers {
-				if untrackedPod.Status.PodIP == server.Host {
-					tracked = true
-				}
+			// check if this podIP is already tracked
+			if _, ok := monitoredService.trackedPods[untrackedPod.Status.PodIP]; ok {
+				tracked = true
 			}
 			// if untrackedPod is not tracked, append it to the list of tracked pods
 			if !tracked {
@@ -220,8 +219,9 @@ func (lb *loadbalancer) checkForUpdate(pods []api.Pod) bool {
 			if sv.sni != "" {
 				// update lbConfigWriter with new service
 				lb.services[getPodRoute(untrackedPod, lb.usePBR)] = sv
-				lbServer := getLoadBalancerComponent(sv)
-				lb.lbConfigWriter.AddLbServer(lbServer)
+				//lbServer := getLoadBalancerComponent(sv)
+				//lb.lbConfigWriter.AddLbServer(lbServer)
+				glog.Infof("New service detected with path: %s", sv.sni)
 				updated = true
 			}
 		}
@@ -247,11 +247,13 @@ func (lb *loadbalancer) checkForDeadPods(pods []api.Pod) bool {
 		}
 		// if this service no longer has any pods associated with it
 		if len(newTrackedPods) == 0 {
+			glog.Infof("service with sni: %s is at 0 pods. Removing from config", svc.sni)
 			delete(lb.services, svc.sni)
 			updated = true
 		} else if !reflect.DeepEqual(svc.trackedPods, newTrackedPods) {
 			// if the updated list of pods doesnt match the already tracked pods
 			// remove tracked pods that no longer exist
+			glog.Infof("A pod has been removed from service with sni: %s", svc.sni)
 			updated = true
 		}
 	}
@@ -261,22 +263,36 @@ func (lb *loadbalancer) checkForDeadPods(pods []api.Pod) bool {
 // rewrites lbconfig struct after a change in pods is detected
 // updates then calls LbConfigWriter.WriteConfigFile()
 func (lb *loadbalancer) rewriteConfig(pods []api.Pod) error {
+	glog.Info("rewriting blb config")
 	var newBackend Backend
 	// reset backends
 	lb.lbConfigWriter.SetBackends(make(map[string]Backend))
+	// reset servers
+	lb.lbConfigWriter.ClearLbServers()
+
 	// for each service check for pods whose sni matches the service's
 	for _, svc := range lb.services {
+		lbServer := getLoadBalancerComponent(svc)
+
 		servers := []*Server{}
+		servicePods := map[string]api.PodStatus{}
 		for _, pod := range pods {
 			// if pod matches the route of svc append to server list
 			if getPodRoute(pod, lb.usePBR) == svc.sni {
+				servicePods[pod.Status.PodIP] = pod.Status
 				servers = append(servers, &Server{
 					Host: pod.Status.PodIP,
 					Port: lb.svcPort,
 				})
 			}
 		}
+		// update service pods
+		glog.Infof("new service pods: %v", servicePods)
+		svc.trackedPods = servicePods
+
 		if len(servers) > 0 {
+			lb.lbConfigWriter.AddLbServer(lbServer)
+			glog.Infof("found %d pods with sni %s", len(servers), svc.sni)
 			if lb.usePBR {
 				newBackend = Backend{
 					Name:    svc.sni,
@@ -291,6 +307,7 @@ func (lb *loadbalancer) rewriteConfig(pods []api.Pod) error {
 				}
 			}
 			lb.lbConfigWriter.SetBackend(svc.sni, newBackend)
+			svc.trackedPods = servicePods
 		}
 	}
 
@@ -318,6 +335,7 @@ func notifyHAProxy() error {
 		}
 		time.Sleep(time.Duration(count) * time.Second)
 		err = cmd.Run()
+		glog.Warning(err)
 	}
 	if err != nil {
 		return err
@@ -337,6 +355,7 @@ func notifyHAProxy() error {
 // grandchild process. This method find the zombie haproxy
 // process and calls wait() which allows the zombie to die
 func killDefunctProcess(pid int) error {
+	glog.Infof("killing old pid %d", pid)
 	proc, err := os.FindProcess(pid)
 	if err != nil {
 		return err
@@ -345,6 +364,10 @@ func killDefunctProcess(pid int) error {
 	if !state.Exited() {
 		glog.Warning(state.String())
 	}
+	if err != nil {
+		glog.Warning(err)
+	}
+	err = proc.Kill()
 	return err
 }
 
@@ -360,11 +383,11 @@ func validConfig() bool {
 // reads pidFile. If pidFile is empty retry
 // with a linear backoff
 func getPid() string {
-	glog.Info("getting haproxy pid")
 	pidBytes, err := ioutil.ReadFile(HAPROXY_PID_FILE)
 	if err != nil {
 		glog.Warning("Failed to read pid file")
 	}
+	glog.Infof("got haproxy pid: %s", string(pidBytes))
 	return string(pidBytes)
 }
 

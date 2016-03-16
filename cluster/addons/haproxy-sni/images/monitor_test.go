@@ -21,12 +21,16 @@ func lbFromPods(pods *api.PodList) (*loadbalancer, error) {
 
 	// create a backend and LBServer for each service being load balanced
 	for _, sv := range services {
+		servers := []*Server{}
+		for _, pod := range sv.trackedPods {
+			servers = append(servers, &Server{Host: pod.PodIP, Port: 2048})
+		}
 		lbServer = getLoadBalancerComponent(sv)
 		lbServers = append(lbServers, lbServer)
 		backends[sv.sni] = Backend{
 			Name:    sv.sni,
 			SNI:     fmt.Sprintf("%s.", sv.sni),
-			Servers: []*Server{},
+			Servers: servers,
 		}
 	}
 
@@ -66,7 +70,7 @@ func newObjectMeta(sni string) api.ObjectMeta {
 
 func createPodList() *api.PodList {
 	return &api.PodList{
-		Items: createPods()[:2],
+		Items: createPods()[:3],
 	}
 }
 
@@ -75,42 +79,95 @@ func createPods() []api.Pod {
 		api.Pod{
 			ObjectMeta: newObjectMeta("thorSni"),
 			Status: api.PodStatus{
+				Phase: api.PodRunning,
 				PodIP: "thor",
 			},
 		},
 		api.Pod{
 			ObjectMeta: newObjectMeta("chiefSni"),
 			Status: api.PodStatus{
+				Phase: api.PodRunning,
 				PodIP: "chief",
 			},
 		},
 		api.Pod{
 			ObjectMeta: newObjectMeta("seamusSni"),
 			Status: api.PodStatus{
+				Phase: api.PodRunning,
 				PodIP: "seamus",
 			},
 		},
 		api.Pod{
 			ObjectMeta: newObjectMeta("odinSni"),
 			Status: api.PodStatus{
+				Phase: api.PodRunning,
 				PodIP: "odin",
 			},
 		},
 	}
 }
 
+func TestGetRunningPods(t *testing.T) {
+	pods := []api.Pod{
+		api.Pod{
+			ObjectMeta: newObjectMeta("odinSni"),
+			Status: api.PodStatus{
+				Phase: api.PodRunning,
+				PodIP: "odin",
+			},
+		},
+	}
+	if len(getRunningPods(pods)) != 1 {
+		t.Fatal("getRunningPods deleted pod when it shouldn't have")
+	}
+	pods[0].Status.Phase = api.PodPending
+	if len(getRunningPods(pods)) != 0 {
+		t.Fatal("getRunningPods did not delete a non-running pod")
+	}
+	pods[0].Status.Phase = api.PodRunning
+	delete(pods[0].ObjectMeta.Labels, HAPROXY_NAME)
+	if len(getRunningPods(pods)) != 0 {
+		t.Fatal("getRunningPods did not delete a pod that no longer has an sni")
+	}
+}
+
 func TestCheckForUpdate(t *testing.T) {
+	var updated bool
 	lb, err := lbFromPods(createPodList())
 	if err != nil {
 		t.Fatal("lbFromPods failed somehow which means you really done goofed")
 	}
-	updated := lb.checkForUpdate(createPods())
+	// 3 pods -> 3 pods
+	pods := createPods()[:3]
+	updated = lb.checkForUpdate(pods)
+	if updated {
+		t.Fatal("checkForUpdate returned True when no pods changed")
+	}
+	// 3 pods -> 4 pods (new service)
+	updated = lb.checkForUpdate(createPods())
 	if !updated {
 		t.Fatal("checkForUpdate returned False when one pod was added")
 	}
-	updated = lb.checkForUpdate(createPods()[:1])
+	// 2 pods/2 services removed
+	updated = lb.checkForUpdate(createPods()[:2])
 	if !updated {
 		t.Fatal("checkForUpdate returned False when two pods were removed")
+	}
+	// replace one pod with empty object meta
+	pods[0].ObjectMeta = api.ObjectMeta{}
+	updated = lb.checkForUpdate(pods)
+	if !updated {
+		t.Fatal("checkForUpdate returned False when one pod was removed by deleting the haproxy labels")
+	}
+	// 3 pods -> 4 pods (one additional pod in existing service)
+	pods = createPods()
+	pods[len(pods)-1].ObjectMeta = newObjectMeta("SeamusSni")
+	pods[len(pods)-1].Status = api.PodStatus{
+		PodIP: "127.0.0.1",
+	}
+	updated = lb.checkForUpdate(pods)
+	if !updated {
+		t.Fatal("checkForUpdate returned False when one pod was added to an existing service")
 	}
 }
 

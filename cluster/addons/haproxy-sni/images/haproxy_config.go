@@ -87,6 +87,7 @@ type LBConfigWriter interface {
 	SetBackends(backends map[string]Backend)
 	RemoveBackend(string)
 	SetSyslogAddr(string)
+	ClearLbServers()
 	AddLbServer(LBServer)
 	GetConfigFilePath() string
 }
@@ -106,8 +107,7 @@ type BaseCfg struct {
 }
 
 // Represents a backend. In yeti-world each backend corresponds
-// to an autoscale group. Backends specify the servers that haproxy
-// is load balancing
+// to a set of pods running a service.
 type Backend struct {
 	// name of backend
 	Name string
@@ -189,6 +189,10 @@ func (h *HAProxyLB) SetSyslogAddr(addr string) {
 
 func (h *HAProxyLB) AddLbServer(lbs LBServer) {
 	h.LBServers = append(h.LBServers, lbs)
+}
+
+func (h *HAProxyLB) ClearLbServers() {
+	h.LBServers = []LBServer{}
 }
 
 func (h *HAProxyLB) SetBackends(backends map[string]Backend) {

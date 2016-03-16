@@ -76,6 +76,10 @@ func (h *HAProxyPBLB) SetSyslogAddr(addr string) {
 	h.Base.SyslogAddr = addr
 }
 
+func (h *HAProxyPBLB) ClearLbServers() {
+	h.LBServers = []LBServer{}
+}
+
 func (h *HAProxyPBLB) AddLbServer(lbs LBServer) {
 	h.LBServers = append(h.LBServers, lbs)
 }
