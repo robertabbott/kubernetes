@@ -355,20 +355,33 @@ func notifyHAProxy() error {
 // grandchild process. This method find the zombie haproxy
 // process and calls wait() which allows the zombie to die
 func killDefunctProcess(pid int) error {
-	glog.Infof("killing old pid %d", pid)
+	errCh := make(chan error)
 	proc, err := os.FindProcess(pid)
 	if err != nil {
 		return err
 	}
+	// call Wait() on old pid. If process doesn't die
+	// after 3 seconds kill it
+	glog.Infof("waiting old pid %d", pid)
+	go waitTimeout(proc, errCh)
+	select {
+	case err = <-errCh:
+		if err != nil {
+			glog.Warning(err)
+		}
+	case <-time.After(3 * time.Second):
+		glog.Infof("Wait pid timed out. Killing pid %s", pid)
+		return proc.Kill()
+	}
+	return err
+}
+
+func waitTimeout(proc *os.Process, errCh chan error) {
 	state, err := proc.Wait()
 	if !state.Exited() {
 		glog.Warning(state.String())
 	}
-	if err != nil {
-		glog.Warning(err)
-	}
-	err = proc.Kill()
-	return err
+	errCh <- err
 }
 
 func validConfig() bool {
