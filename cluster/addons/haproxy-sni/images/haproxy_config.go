@@ -66,8 +66,10 @@ backend bk_ssl_application_{{.Name}}
     # Learn on response if server hello.
     stick store-response payload_lv(43,1) if serverhello
    
-    option ssl-hello-chk
-{{range .Servers}}    server server{{.Host}}{{.Port}} {{.}}
+    option tcp-check
+    option log-health-checks
+    default-server inter 10s fall 2 rise 2
+{{range .Servers}}    server server{{.Host}}{{.Port}} {{.}} check port {{.Port}}
 {{end}}
 `
 

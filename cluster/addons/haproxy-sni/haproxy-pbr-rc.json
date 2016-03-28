@@ -2,20 +2,20 @@
   "apiVersion": "v1",
   "kind": "ReplicationController",
   "metadata": {
-    "name": "haproxy-pbr-v1.0",
+    "name": "haproxy-pbr",
     "labels": {
-      "app": "haproxy-pbr-v1.0"
+      "app": "haproxy-pbr"
     }
   },
   "spec": {
     "replicas": 2,
     "selector": {
-      "appid": "haproxy-pbr-v1.0"
+      "appid": "haproxy-pbr"
     },
     "template": {
       "metadata": {
         "labels": {
-          "appid": "haproxy-pbr-v1.0",
+          "appid": "haproxy-pbr",
           "app": "haproxy-pbr"
         }
       },
@@ -28,7 +28,7 @@
         "containers": [
           {
             "name": "haproxy-pbr",
-            "image": "registry.int.brkt.net/brkt/haproxy-pbr:v1.0",
+            "image": "registry.int.brkt.net/brkt/haproxy-pbr:v1.1",
             "imagePullPolicy": "Always",
             "command": ["/bin/haproxy-monitor", "-usePBR=true", "-svcPort=8888"],
             "ports": [{

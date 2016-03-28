@@ -201,7 +201,7 @@ func (lb *loadbalancer) checkForUpdate(pods []api.Pod) bool {
 		if untrackedPod.Status.PodIP == "" {
 			continue
 		}
-		// check if the untrackedPod is a for an untracked service
+		// check if the untrackedPod is for an untracked service
 		if monitoredService, ok := lb.services[getPodRoute(untrackedPod, lb.usePBR)]; ok {
 			tracked := false
 			// check if this podIP is already tracked
@@ -261,7 +261,7 @@ func (lb *loadbalancer) checkForDeadPods(pods []api.Pod) bool {
 }
 
 // rewrites lbconfig struct after a change in pods is detected
-// updates then calls LbConfigWriter.WriteConfigFile()
+// then calls LbConfigWriter.WriteConfigFile()
 func (lb *loadbalancer) rewriteConfig(pods []api.Pod) error {
 	glog.Info("rewriting blb config")
 	var newBackend Backend

@@ -34,8 +34,10 @@ backend bk_ssl_application_backend0
     # Learn on response if server hello.
     stick store-response payload_lv(43,1) if serverhello
    
-    option ssl-hello-chk
-    server server127.0.0.17000 127.0.0.1:7000
+    option tcp-check
+    option log-health-checks
+    default-server inter 10s fall 2 rise 2
+    server server127.0.0.17000 127.0.0.1:7000 check port 7000
 
 `
 	HAP_BACKENDS2 = `
@@ -61,8 +63,10 @@ backend bk_ssl_application_backend1
     # Learn on response if server hello.
     stick store-response payload_lv(43,1) if serverhello
    
-    option ssl-hello-chk
-    server server127.0.0.17001 127.0.0.1:7001
+    option tcp-check
+    option log-health-checks
+    default-server inter 10s fall 2 rise 2
+    server server127.0.0.17001 127.0.0.1:7001 check port 7001
 
 `
 	HAP_FE = `
