@@ -62,8 +62,7 @@ func servicesFromPods(pods []api.Pod) map[string]*svc {
 func newObjectMeta(sni string) api.ObjectMeta {
 	return api.ObjectMeta{
 		Labels: map[string]string{
-			HAPROXY_NAME:   sni,
-			HAPROXY_EXPOSE: "true",
+			HAPROXY_NAME: sni,
 		},
 	}
 }

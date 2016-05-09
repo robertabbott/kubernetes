@@ -69,7 +69,7 @@ backend bk_ssl_application_{{.Name}}
     option tcp-check
     option log-health-checks
     default-server inter 10s fall 2 rise 2
-{{range .Servers}}    server server{{.Host}}{{.Port}} {{.}} check port {{.Port}}
+{{range .Servers}}    server server{{.Host}}{{.Port}} {{.}} check port {{.Port}}{{if .Proxy}} send-proxy{{end}}
 {{end}}
 `
 
@@ -122,8 +122,9 @@ type Backend struct {
 }
 
 type Server struct {
-	Host string
-	Port int
+	Host  string
+	Port  int
+	Proxy bool
 }
 
 func (s *Server) String() string {

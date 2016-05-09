@@ -23,11 +23,10 @@ import (
 )
 
 const (
-	MAX_RETRIES         = 5
-	HAPROXY_NAME        = "haproxy-sni-name"
-	HAPROXY_EXPOSE      = "haproxy-sni-expose"
-	HAPROXY_PATH_NAME   = "haproxy-pbr-name"
-	HAPROXY_PATH_EXPOSE = "haproxy-pbr-expose"
+	MAX_RETRIES       = 5
+	HAPROXY_NAME      = "haproxy-sni-name"
+	HAPROXY_PATH_NAME = "haproxy-pbr-name"
+	PROXY_PROTOCOL    = "proxy-protocol"
 )
 
 type loadbalancer struct {
@@ -72,6 +71,8 @@ func newLb(usePBR bool, svcPort int) *loadbalancer {
 type svc struct {
 	// service-specific prefix for this service
 	sni string
+
+	proxy bool
 
 	// Internal information about containers. ContainerPort
 	// and PodIP will be used to construct backends for
@@ -281,8 +282,9 @@ func (lb *loadbalancer) rewriteConfig(pods []api.Pod) error {
 			if getPodRoute(pod, lb.usePBR) == svc.sni {
 				servicePods[pod.Status.PodIP] = pod.Status
 				servers = append(servers, &Server{
-					Host: pod.Status.PodIP,
-					Port: lb.svcPort,
+					Host:  pod.Status.PodIP,
+					Port:  lb.svcPort,
+					Proxy: getProxyProtocol(pod),
 				})
 			}
 		}
@@ -421,11 +423,20 @@ func ipFromRoute(contents string) string {
 	return ""
 }
 
+func getProxyProtocol(pod api.Pod) bool {
+	_, ok := pod.ObjectMeta.Labels[PROXY_PROTOCOL]
+	if ok {
+		return true
+	}
+	return false
+}
+
 // create service for a given pod
 func serviceFromPod(pod api.Pod, usePBR bool) *svc {
 	return &svc{
 		// sni must be service specific
 		sni:         getPodRoute(pod, usePBR),
+		proxy:       getProxyProtocol(pod),
 		trackedPods: map[string]api.PodStatus{pod.Status.PodIP: pod.Status},
 	}
 }

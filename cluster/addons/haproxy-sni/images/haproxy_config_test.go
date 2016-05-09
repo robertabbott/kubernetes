@@ -11,6 +11,35 @@ const (
 	HAP_SERVERS = `
     server server_backend0 backend0:0
     server server_backend1 backend1:1`
+	HAP_BACKENDS_PROXY = `
+backend bk_ssl_application_backend0
+    mode tcp
+    balance roundrobin
+
+    # maximum SSL session ID length is 32 bytes.
+    stick-table type binary len 32 size 30k expire 30m
+   
+    acl clienthello req_ssl_hello_type 1
+    acl serverhello rep_ssl_hello_type 2
+   
+    # use tcp content accepts to detects ssl client and server hello.
+    tcp-request inspect-delay 5s
+    tcp-request content accept if clienthello
+   
+    # no timeout on response inspect delay by default.
+    tcp-response content accept if serverhello
+   
+    stick on payload_lv(43,1) if clienthello
+   
+    # Learn on response if server hello.
+    stick store-response payload_lv(43,1) if serverhello
+   
+    option tcp-check
+    option log-health-checks
+    default-server inter 10s fall 2 rise 2
+    server server127.0.0.17000 127.0.0.1:7000 check port 7000 send-proxy
+
+`
 	HAP_BACKENDS = `
 backend bk_ssl_application_backend0
     mode tcp
@@ -180,6 +209,33 @@ func TestHAPWriteBackends(t *testing.T) {
 	}
 	s := trimZeros(b)
 	if s != HAP_BACKENDS {
+		t.Fatal("writeBackends wrote an incorrect result")
+	}
+}
+
+func TestHAPWriteBackendsProxy(t *testing.T) {
+	b := make([]byte, 2048)
+	var buf bytes.Buffer
+	backend := newBackends(1)
+	for key, b := range backend {
+		for _, server := range b.Servers {
+			server.Proxy = true
+		}
+	}
+	fmt.Println(backend)
+	err := writeBackends(backend, &buf, HAP_BACKEND_TEMPLATE)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = buf.Read(b)
+	if err != nil && err != io.EOF {
+		t.Fatal(err)
+	}
+	if empty(b) {
+		t.Fatal("writeBackends returned empty string even though a backend was provided")
+	}
+	s := trimZeros(b)
+	if s != HAP_BACKENDS_PROXY {
 		t.Fatal("writeBackends wrote an incorrect result")
 	}
 }
